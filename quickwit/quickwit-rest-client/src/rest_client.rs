@@ -27,7 +27,10 @@ use quickwit_serve::{
 };
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use reqwest::tls::Certificate;
-use reqwest::{Client, ClientBuilder, Method, StatusCode, Url};
+use reqwest::{ClientBuilder as ReqwestClientBuilder, Method, StatusCode, Url};
+use reqwest_middleware::{ClientBuilder as ReqwestMiddlewareClientBuilder, ClientWithMiddleware};
+use reqwest_retry::policies::ExponentialBackoff;
+use reqwest_retry::RetryTransientMiddleware;
 use serde::Serialize;
 use serde_json::json;
 
@@ -47,28 +50,41 @@ pub const DEFAULT_CLIENT_COMMIT_TIMEOUT: Timeout = Timeout::from_mins(30);
 struct Transport {
     base_url: Url,
     api_url: Url,
-    client: Client,
+    client: ClientWithMiddleware,
 }
 
 impl Transport {
-    fn new(endpoint: Url, connect_timeout: Timeout, ca_cert: Option<Certificate>) -> Self {
+    fn new(
+        endpoint: Url,
+        connect_timeout: Timeout,
+        ca_cert: Option<Certificate>,
+        max_num_retries: u32,
+    ) -> Self {
         let base_url = endpoint;
         let api_url = base_url
             .join("api/v1/")
-            .expect("Endpoint should not be malformed.");
-        let mut client_builder = ClientBuilder::new();
+            .expect("root url should be well-formed");
+        let mut reqwest_client_builder = ReqwestClientBuilder::new();
         if let Some(duration) = connect_timeout.as_duration_opt() {
-            client_builder = client_builder.connect_timeout(duration);
+            reqwest_client_builder = reqwest_client_builder.connect_timeout(duration);
         }
         if let Some(ca_cert) = ca_cert {
-            client_builder = client_builder
+            reqwest_client_builder = reqwest_client_builder
                 .tls_built_in_root_certs(false)
                 .add_root_certificate(ca_cert);
         }
+        let retry_policy = ExponentialBackoff::builder().build_with_max_retries(max_num_retries);
+        let retry_transient_middleware = RetryTransientMiddleware::new_with_policy(retry_policy);
+        let reqwest_client = reqwest_client_builder
+            .build()
+            .expect("`client_builder.build()` should not fail");
+        let client = ReqwestMiddlewareClientBuilder::new(reqwest_client)
+            .with(retry_transient_middleware)
+            .build();
         Self {
             base_url,
             api_url,
-            client: client_builder.build().expect("Client should be built."),
+            client,
         }
     }
 
@@ -129,6 +145,8 @@ pub struct QuickwitClientBuilder {
     detailed_response: bool,
     /// Validate against a custom TLS certificate authority
     ca_cert: Option<Certificate>,
+    /// Maximum number of retries for transient errors.
+    max_num_retries: u32,
 }
 
 impl QuickwitClientBuilder {
@@ -143,6 +161,7 @@ impl QuickwitClientBuilder {
             use_legacy_ingest: false,
             detailed_response: false,
             ca_cert: None,
+            max_num_retries: 0,
         }
     }
 
@@ -187,8 +206,18 @@ impl QuickwitClientBuilder {
         self
     }
 
+    pub fn max_num_retries(mut self, max_num_retries: u32) -> Self {
+        self.max_num_retries = max_num_retries;
+        self
+    }
+
     pub fn build(self) -> QuickwitClient {
-        let transport = Transport::new(self.base_url, self.connect_timeout, self.ca_cert);
+        let transport = Transport::new(
+            self.base_url,
+            self.connect_timeout,
+            self.ca_cert,
+            self.max_num_retries,
+        );
         QuickwitClient {
             transport,
             timeout: self.timeout,
@@ -744,6 +773,7 @@ mod test {
     use std::path::PathBuf;
     use std::str::FromStr;
 
+    use http::StatusCode;
     use quickwit_config::{ConfigFormat, SourceConfig};
     use quickwit_indexing::mock_split;
     use quickwit_ingest::CommitType;
@@ -752,7 +782,7 @@ mod test {
         ListSplitsQueryParams, ListSplitsResponse, RestIngestResponse, SearchRequestQueryString,
     };
     use reqwest::header::CONTENT_TYPE;
-    use reqwest::{StatusCode, Url};
+    use reqwest::Url;
     use serde_json::json;
     use tokio::fs::File;
     use tokio::io::AsyncReadExt;
@@ -771,9 +801,7 @@ mod test {
         let server_url = Url::parse(&format!("http://127.0.0.1:{port}")).unwrap();
         let qw_client = QuickwitClientBuilder::new(server_url).build();
         let error = qw_client.indexes().list().await.unwrap_err();
-
-        assert!(matches!(error, Error::Client(_)));
-        assert!(error.to_string().contains("tcp connect error"));
+        assert!(matches!(error, Error::Middleware(_)));
     }
 
     #[tokio::test]

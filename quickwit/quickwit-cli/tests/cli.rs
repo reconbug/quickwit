@@ -54,6 +54,7 @@ async fn create_logs_index(test_env: &TestEnv) -> anyhow::Result<()> {
         index_config_uri: test_env.resource_files.index_config.clone(),
         overwrite: false,
         assume_yes: true,
+        max_num_retries: 0,
     };
     create_index_cli(args).await
 }
@@ -118,6 +119,7 @@ async fn test_cmd_create_no_index_uri() {
         index_config_uri: index_config_without_uri,
         overwrite: false,
         assume_yes: true,
+        max_num_retries: 0,
     };
 
     let response = create_index_cli(args).await;
@@ -143,6 +145,7 @@ async fn test_cmd_create_overwrite() {
         index_config_uri: index_config_without_uri,
         overwrite: true,
         assume_yes: true,
+        max_num_retries: 0,
     };
 
     create_index_cli(args).await.unwrap();

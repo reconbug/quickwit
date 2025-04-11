@@ -61,6 +61,9 @@ pub fn build_index_command() -> Command {
                         .required(true),
                     arg!(--overwrite "Overwrites pre-existing index. This will delete all existing data stored at `index-uri` before creating a new index.")
                         .required(false),
+                    arg!(--max-retries <MAX_RETRIES> "Maximum number of retries for transient errors.")
+                        .default_value("0")
+                        .required(false),
                 ])
             )
         .subcommand(
@@ -111,6 +114,9 @@ pub fn build_index_command() -> Command {
                 .args(&[
                     arg!(--index <INDEX> "ID of the target index")
                         .required(true),
+                    arg!(--max-retries <MAX_RETRIES> "Maximum number of retries for transient errors.")
+                        .default_value("0")
+                        .required(false),
                 ])
             )
         .subcommand(
@@ -203,6 +209,7 @@ pub struct CreateIndexArgs {
     pub index_config_uri: Uri,
     pub overwrite: bool,
     pub assume_yes: bool,
+    pub max_num_retries: u32,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -217,6 +224,7 @@ pub struct UpdateIndexArgs {
 pub struct DescribeIndexArgs {
     pub client_args: ClientArgs,
     pub index_id: IndexId,
+    pub max_num_retries: u32,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -315,12 +323,18 @@ impl IndexCliCommand {
             .expect("`index-config` should be a required arg.")?;
         let overwrite = matches.get_flag("overwrite");
         let assume_yes = matches.get_flag("yes");
+        let max_num_retries = matches
+            .remove_one::<String>("max-retries")
+            .map(|retries| retries.parse::<u32>())
+            .transpose()?
+            .expect("`max-retries` should have a default value.");
 
         Ok(Self::Create(CreateIndexArgs {
             client_args,
             index_config_uri,
             overwrite,
             assume_yes,
+            max_num_retries,
         }))
     }
 
@@ -348,9 +362,15 @@ impl IndexCliCommand {
         let index_id = matches
             .remove_one::<String>("index")
             .expect("`index` should be a required arg.");
+        let max_num_retries = matches
+            .remove_one::<String>("max-retries")
+            .map(|retries| retries.parse::<u32>())
+            .transpose()?
+            .expect("`max-retries` should have a default value.");
         Ok(Self::Describe(DescribeIndexArgs {
             client_args,
             index_id,
+            max_num_retries,
         }))
     }
 

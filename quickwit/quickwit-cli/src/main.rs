@@ -193,6 +193,7 @@ mod tests {
             index_config_uri: expected_index_config_uri.clone(),
             overwrite: false,
             assume_yes: false,
+            max_num_retries: 0,
         }));
         assert_eq!(command, expected_cmd);
 
@@ -210,6 +211,7 @@ mod tests {
             index_config_uri: expected_index_config_uri,
             overwrite: true,
             assume_yes: false,
+            max_num_retries: 0,
         }));
         assert_eq!(command, expected_cmd);
 

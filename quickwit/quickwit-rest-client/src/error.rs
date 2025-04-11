@@ -36,6 +36,9 @@ pub enum Error {
     // Json serialization/deserialization error.
     #[error("Serde JSON error: {0}")]
     Json(#[from] serde_json::error::Error),
+    // Error returned by reqwest middleware.
+    #[error(transparent)]
+    Middleware(#[from] reqwest_middleware::Error),
     // Error returned by url lib when parsing a string.
     #[error("URL parsing error: {0}")]
     UrlParse(String),
